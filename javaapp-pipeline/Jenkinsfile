@@ -7,28 +7,28 @@ pipeline {
             when {
                 branch 'dev'
             }
-            steps{
-                dir('javaapp-pipeline'){
+            steps { 
+                dir('javaapp-pipeline') {
                     sh 'mvn clean test'
                 }
             }
         }
-        stage(build){
-            when{
+        stage('Build') {
+            when {
                 branch 'master'
             }
-            steps{
-                dir('javaapp-pipeline'){
+            steps {
+                dir('javaapp-pipeline') {
                     sh 'mvn clean package'
                 }
             }
-
-            stage('Deploy'){
-            when{
+        }
+            stage('Deploy') {
+            when {
                 branch 'master'
             }
                 steps{
-                    dir('javaapp-pipeline/target'){
+                    dir('javaapp-pipeline/target') {
                         sh '''
                         if pgrep -f "java -jar java-sample-21-1.0.0.jar" > /dev/null; then
                             pkill -f "java -jar java-sample-21-1.0.0.jar"
