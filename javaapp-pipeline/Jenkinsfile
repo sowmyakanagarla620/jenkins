@@ -1,47 +1,97 @@
 pipeline {
-    agent any
+    agent none
 
     stages {
-
-        stage('unit Tests') {
-            when {
-                branch 'dev'
+        stage('Checkout') {
+            agent { label 'agent' }
+            steps {
+                git url: 'https://github.com/artisantek/jenkins.git'
             }
-            steps { 
-                dir('javaapp-pipeline') {
+        }
+
+        stage('Unit Tests') {
+            agent { label 'agent' }
+            steps {
+                dir('javaapp-tomcat') {
                     sh 'mvn clean test'
                 }
             }
         }
-        stage('Build') {
-            when {
-                branch 'master'
-            }
+
+        stage('Trivy Scan') {
+            agent { label 'agent' }
             steps {
-                dir('javaapp-pipeline') {
+                dir('javaapp-tomcat') {
+                    sh '''
+                        wget -q https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -O html.tpl
+                        trivy fs --format template --template "@html.tpl" -o report.html .
+                    '''
+                }
+            }
+        }
+
+        stage('Build') {
+            agent { label 'agent' }
+            steps {
+                dir('javaapp-tomcat') {
                     sh 'mvn clean package'
                 }
             }
         }
-            stage('Deploy') {
-            when {
-                branch 'master'
-            }
-                steps {
-                    dir('javaapp-pipeline/target') {
-                        sh '''
-                        if pgrep -f "java -jar java-sample-21-1.0.0.jar" > /dev/null; then
-                            pkill -f "java -jar java-sample-21-1.0.0.jar"
-                            echo "App was running and has been killed."
-                        else
-                            echo "App is not running."
-                        fi
-                        JENKINS_NODE_COOKIE=dontKillMe nohup java -jar java-sample-21-1.0.0.jar > app.log 2>&1 &
-                    '''
-                    }
+
+        stage('Publish') {
+            agent { label 'agent' }
+            steps {
+                dir('javaapp-tomcat/target') {
+                rtUpload (
+                    serverId: 'jfrog',
+                    spec: '''{
+                        "files": [
+                            {
+                            "pattern": "artisantek-app.war",
+                            "target": "Maven/com/artisantek-app.war/1.0.0"
+                            }
+                        ]
+                    }'''
+                )
                 }
             }
         }
+
+        stage('Deploy to Tomcat') {
+    agent { label 'tomcat-agent' }
+
+    steps {
+        dir('/home/ec2-user/artifacts') {  // or any temp dir Jenkins has access to
+            rtDownload (
+                serverId: 'jfrog',
+                spec: '''{
+                    "files": [
+                        {
+                            "pattern": "Maven/com/artisantek-app.war/1.0.0",
+                            "target": "."
+                        }
+                    ]
+                }'''
+            )
+
+            // Move the artifact to webapps using sudo
+            sh '''
+                echo "Moving WAR file to Tomcat webapps folder with sudo..."
+                sudo mv com/artisantek-app.war /opt/apache-tomcat-9.0.105/webapps/
+            '''
+
+            // Restart Tomcat
+            sh '''
+                echo "Restarting Tomcat..."
+                sudo /opt/apache-tomcat-9.0.105/bin/shutdown.sh
+                sleep 5
+                sudo /opt/apache-tomcat-9.0.105/bin/startup.sh
+            '''
+        }
     }
-    
-                
+}
+
+
+   }
+}
