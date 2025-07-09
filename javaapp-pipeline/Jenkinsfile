@@ -1,97 +1,50 @@
 pipeline {
-    agent none
+agent any
+stages {
+stage('Checkout') {
+steps {
 
-    stages {
-        stage('Checkout') {
-            agent { label 'agent' }
-            steps {
-                git url: 'https://github.com/artisantek/jenkins.git'
-            }
-        }
-
-        stage('Unit Tests') {
-            agent { label 'agent' }
-            steps {
-                dir('javaapp-tomcat') {
-                    sh 'mvn clean test'
-                }
-            }
-        }
-
-        stage('Trivy Scan') {
-            agent { label 'agent' }
-            steps {
-                dir('javaapp-tomcat') {
-                    sh '''
-                        wget -q https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -O html.tpl
-                        trivy fs --format template --template "@html.tpl" -o report.html .
-                    '''
-                }
-            }
-        }
-
-        stage('Build') {
-            agent { label 'agent' }
-            steps {
-                dir('javaapp-tomcat') {
-                    sh 'mvn clean package'
-                }
-            }
-        }
-
-        stage('Publish') {
-            agent { label 'agent' }
-            steps {
-                dir('javaapp-tomcat/target') {
-                rtUpload (
-                    serverId: 'jfrog',
-                    spec: '''{
-                        "files": [
-                            {
-                            "pattern": "artisantek-app.war",
-                            "target": "Maven/com/artisantek-app.war/1.0.0"
-                            }
-                        ]
-                    }'''
-                )
-                }
-            }
-        }
-
-        stage('Deploy to Tomcat') {
-    agent { label 'tomcat-agent' }
-
-    steps {
-        dir('/home/ec2-user/artifacts') {  // or any temp dir Jenkins has access to
-            rtDownload (
-                serverId: 'jfrog',
-                spec: '''{
-                    "files": [
-                        {
-                            "pattern": "Maven/com/artisantek-app.war/1.0.0",
-                            "target": "."
-                        }
-                    ]
-                }'''
-            )
-
-            // Move the artifact to webapps using sudo
-            sh '''
-                echo "Moving WAR file to Tomcat webapps folder with sudo..."
-                sudo mv com/artisantek-app.war /opt/apache-tomcat-9.0.105/webapps/
-            '''
-
-            // Restart Tomcat
-            sh '''
-                echo "Restarting Tomcat..."
-                sudo /opt/apache-tomcat-9.0.105/bin/shutdown.sh
-                sleep 5
-                sudo /opt/apache-tomcat-9.0.105/bin/startup.sh
-            '''
-        }
-    }
+echo "Running on Branch: ${env.BRANCH_NAME}"
+checkout scm
+}
+}
+stage('Unit Tests') {
+steps {
+echo "Running unit tests in ${env.BRANCH_NAME} branch"
+sh 'mvn clean test'
+}
 }
 
+stage('Build & Archive') {
+when {
+branch 'main'
+}
+steps {
+echo "Building in main branch"
+sh 'mvn clean package'
+// archiveArtifacts artifacts: '**/target/*.jar', fingerprint: true
+}
+}
+stage('Deploy') {
+when {
+branch 'main'
+}
+steps {
+echo "Deploying app from main branch"
+dir('target') {
+sh '''
+if pgrep -f "java -jar java-sample-21-1.0.0.jar" > /dev/null; then
+pkill -f "java -jar java-sample-21-1.0.0.jar"
 
-   }
+echo "App was running and has been killed."
+else
+echo "App is not running."
+fi
+JENKINS_NODE_COOKIE=dontKillMe nohup java -jar java-sample-21-1.0.0.jar > app.log
+2>&1 &
+'''
+}
+}
+}
+}
 }
